@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <cctype>
 
 struct UsnEntry {
     USN usnNumber;
@@ -96,21 +97,39 @@ public:
         }
     }
 
-    bool initialize() {
-        hVolume = CreateFile(TEXT("\\\\.\\C:"),
-            GENERIC_READ | GENERIC_WRITE,
+    
+    bool initialize(const std::string& drive) {
+        if (drive.size() != 2 ||
+            !isalpha(static_cast<unsigned char>(drive[0])) ||
+            drive[1] != ':') {
+            std::cerr << "Invalid drive. Example: U:\n";
+            return false;
+        }
+    
+        std::string volumePath = "\\\\.\\";
+        volumePath += drive;
+    
+        std::cout << "Analyzing volume: " << volumePath << "\n";
+    
+        hVolume = CreateFileA(
+            volumePath.c_str(),
+            GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_EXISTING,
             0,
-            NULL);
-
+            NULL
+        );
+    
         if (hVolume == INVALID_HANDLE_VALUE) {
-            printf("Error opening volume: %d\n", GetLastError());
+            std::cerr << "Error opening volume: "
+                      << GetLastError() << "\n";
             return false;
         }
+    
         return true;
     }
+
 
     void collectUsnEntries() {
         USN_JOURNAL_DATA journalData;
@@ -225,18 +244,20 @@ public:
     }
 };
 
-int main() {
-    std::cout << "https://github.com/santiagolin/TimeChangeDetect\n";
-    TimeChangeDetector detector;
 
-    if (!detector.initialize()) {
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cout << "TimeChangeDetect - USN Journal Analyzer\n";
+        std::cout << "Usage: TimeChangeDetect.exe <drive>\n";
+        std::cout << "Example: TimeChangeDetect.exe U:\n";
         return 1;
     }
-
+    TimeChangeDetector detector;
+    if (!detector.initialize(argv[1])) {
+        return 1;
+    }
     detector.collectUsnEntries();
     detector.detectTimeChanges();
 
-    printf("\nPress enter to exit...");
-    getchar();
     return 0;
 }
