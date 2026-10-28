@@ -1,64 +1,199 @@
-# TimeChangeDetect
+# TimeChangeDetect — NTFS USN Journal Time Anomaly Detector
 
-A Windows utility that detects system time modifications by analyzing the NTFS USN Journal.
+**TimeChangeDetect** — консольная утилита для Windows, предназначенная для выявления изменений системного времени путём анализа журнала изменений NTFS (USN Journal).
 
-## Overview
+Проект является модифицированной версией [santiagolin/TimeChangeDetect](https://github.com/santiagolin/TimeChangeDetect).
 
-This tool helps detect when system time has been manually modified by analyzing the Update Sequence Number (USN) Journal in NTFS volumes. It's particularly useful for forensics and works as an alternative to the Event ID 4616 in the Event Viewer.
+В данном форке реализована возможность **выбора любого доступного NTFS-тома через аргумент командной строки**, добавлен доступ к тому в режиме чтения и настроена автоматическая сборка Windows x64 через GitHub Actions.
 
-## How It Works
+## Возможности
 
-The detection mechanism relies on a fundamental property of the NTFS USN Journal: entries are sequential and each entry contains a timestamp. Here's how the detection works:
+- Обнаружение отрицательных и положительных временных скачков.
+- Анализ последовательности USN и временных меток файловых событий.
+- Выбор исследуемого тома через аргумент командной строки.
+- Работа с NTFS-томами, включая подключённые виртуальные диски VHDX.
+- Открытие исследуемого тома с запросом доступа только на чтение.
+- Вывод результатов непосредственно в консоль.
+- Автоматическая сборка EXE для Windows x64 через GitHub Actions.
 
-1. USN entries are always incremental - each new filesystem operation gets a higher USN than the previous one
-2. Under normal circumstances, timestamps should also increment gradually
-3. When someone changes the system time:
-   - If the clock is set backwards:
-     - We see newer USN entries with older timestamps than previous entries
-     - This creates a "negative time jump"
-   - If the clock is then set forward again:
-     - We see a sudden large positive time jump
-   - These two patterns together confirm a time manipulation event
+## Отличия от оригинальной версии
 
-### Example Scenario
+| Возможность | Оригинал | Данный форк |
+|---|---|---|
+| Выбор диска | Только `C:` | Любая указанная буква тома |
+| Параметры запуска | Без аргументов | `TimeChangeDetect.exe U:` |
+| Открытие тома | Чтение и запись | Только чтение |
+| Автоматическая сборка | — | GitHub Actions |
+| Работа с VHDX | Через выбранный системный том | Через букву подключённого NTFS-тома |
 
-Let's say we have these sequential USN entries:
+Главное изменение — устранена жёсткая привязка к системному диску `C:`. Теперь для анализа другого тома не требуется изменять исходный код и повторно компилировать программу.
 
+## Принцип работы
+
+Утилита анализирует записи системного файла NTFS `$Extend\$UsnJrnl`, содержащего историю изменений файлов и каталогов.
+
+Каждая запись USN-журнала содержит порядковое значение USN и временную метку Timestamp.
+
+В нормальных условиях новые записи имеют возрастающие USN и последовательно изменяющиеся временные метки.
+
+При изменении системных часов могут возникать две характерные аномалии:
+
+**Backward Jump** — отрицательный временной скачок. Новая запись с большим USN имеет более раннюю временную метку.
+
+**Forward Jump** — положительный временной скачок. После возврата системных часов временные метки резко увеличиваются.
+
+Утилита сортирует записи по USN, анализирует временные метки и сообщает об обнаруженных скачках. Порог обнаружения значительного временного изменения составляет 5 минут.
+
+> Обнаружение временных скачков указывает на аномалию системного времени, но само по себе не доказывает преднамеренную подделку. Для криминалистического заключения следует сопоставлять результаты с другими источниками данных.
+
+## Системные требования
+
+- Windows 10/11 или совместимая версия Windows.
+- Файловая система NTFS на исследуемом томе.
+- Активный и доступный USN-журнал.
+- Права администратора.
+- 64-разрядная архитектура Windows для предоставляемой сборки x64.
+
+## Использование
+
+**Синтаксис:**
+
+```powershell
+.\TimeChangeDetect.exe <drive>
 ```
-USN: 1000 | Time: 14:00:00
-USN: 1001 | Time: 14:00:05
-USN: 1002 | Time: 13:00:00  <- Suspicious! Time went backwards
-USN: 1003 | Time: 13:00:10
-USN: 1004 | Time: 14:30:00  <- Time suddenly jumped forward
+
+Примеры запуска:
+
+```powershell
+.\TimeChangeDetect.exe C:
 ```
 
-This pattern strongly indicates that:
-1. The system clock was set back from 14:00 to 13:00
-2. The system operated for a while with the incorrect time
-3. The clock was later corrected, jumping back to the current time
-
-## Why Use USN Journal?
-
-While Windows Event Log (specifically Event ID 4616) is the primary method for detecting time changes, attackers often disable event logging to cover their tracks. This tool provides an alternative detection method by leveraging NTFS filesystem metadata that:
-
-- Cannot be disabled without breaking the filesystem
-- Is essential for NTFS operation
-
-## Requirements
-
-- Windows operating system
-- Administrative privileges (to access the USN Journal)
-- NTFS filesystem
-
-## Usage
-
-Simply run the executable as Administrator:
-
-```bash
-TimeChangeDetect.exe
+```powershell
+.\TimeChangeDetect.exe D:
 ```
 
-The program will:
-1. Access the USN Journal
-2. Collect and analyze the entries
-3. Report any detected time manipulation patterns
+```powershell
+.\TimeChangeDetect.exe U:
+```
+
+Для вывода только последних строк результата:
+
+```powershell
+.\TimeChangeDetect.exe U: | Select-Object -Last 20
+```
+
+Для сохранения результатов:
+
+```powershell
+.\TimeChangeDetect.exe U: |
+    Out-File '.\TimeChangeDetect_result.txt' -Encoding utf8
+```
+
+Программа работает с подключёнными томами Windows. Прямой анализ файла `.vhdx`, `.E01` или заранее извлечённого `$J` через аргумент командной строки в текущей версии не реализован.
+
+## Пример обнаружения временных аномалий
+
+В ходе тестирования использован виртуальный NTFS-диск `USNTEST` размером 64 МБ, созданный в формате VHDX.
+
+В эксперименте выполнены создание файлов, перевод системных часов на два часа назад, изменение файлов, восстановление правильного времени, переименование и удаление.
+
+После эксперимента виртуальный диск подключён к основной Windows в режиме только чтения с буквой `U:`.
+
+Запуск:
+
+```powershell
+.\TimeChangeDetect.exe U:
+```
+
+**Фрагмент фактического результата:**
+
+```text
+Analyzing volume: \\.\U:
+Reading USN Journal...
+First USN: 0
+Next USN: 6336
+
+Dump completed. Entries processed: 67
+
+Sorting entries...
+Analyzing time anomalies...
+
+Time anomaly detected:
+Backward Jump:
+ From: 2026-10-29 07:08:50 (USN: 1672)
+ To:   2026-10-28 18:09:42 (USN: 1960)
+
+Forward Jump:
+ From: 2026-10-28 18:11:06 (USN: 3536)
+ To:   2026-10-28 18:17:58 (USN: 4632)
+```
+
+В результате обработано 67 записей USN-журнала и обнаружены отрицательный и положительный временные скачки.
+
+Дополнительный ручной анализ экспериментальных файлов выявил переход времени с 18:18:18 на 16:19:37 при увеличении USN с 5112 до 5208, а затем восстановление времени с 16:19:52 до 18:27:51 при увеличении USN с 5560 до 5648.
+
+Автоматический и ручной анализы могут показывать разные границы аномалий, поскольку первый рассматривает весь журнал, а второй — выбранные события.
+
+## Использование с виртуальными дисками VHDX
+
+Утилита может анализировать NTFS-раздел внутри VHDX после его подключения к Windows.
+
+Например, подключение образа в PowerShell от имени администратора:
+
+```powershell
+Mount-DiskImage `
+    -ImagePath 'E:\study\USN\usn_zadanie3.vhdx' `
+    -Access ReadOnly
+```
+
+Проверка буквы тома:
+
+```powershell
+Get-Volume -FileSystemLabel USNTEST
+```
+
+Если том получил букву `U:`, анализ выполняется командой:
+
+```powershell
+.\TimeChangeDetect.exe U:
+```
+
+После завершения исследования:
+
+```powershell
+Dismount-DiskImage `
+    -ImagePath 'E:\study\USN\usn_zadanie3.vhdx'
+```
+
+Подключение в режиме только чтения позволяет снизить риск изменения исследуемых данных.
+
+## Автоматическая сборка GitHub Actions
+
+В репозитории используется GitHub Actions для компиляции C++ приложения под Windows x64.
+
+При запуске workflow выполняются получение исходного кода, настройка компилятора Microsoft Visual C++, сборка исполняемого файла и публикация артефакта.
+
+Это позволяет получать новую сборку после внесения изменений без локальной установки Visual Studio.
+
+## Ограничения
+
+- Поддерживается анализ USN-журнала подключённого NTFS-тома.
+- Для чтения журнала обычно необходимы права администратора.
+- Результат зависит от сохранности записей USN-журнала.
+- Старые записи могут быть удалены или вытеснены новыми.
+- Отсутствие обнаруженных скачков не гарантирует, что системное время не изменялось.
+- Временные аномалии могут возникать не только вследствие преднамеренных действий, но и из-за синхронизации часов, изменения конфигурации времени и других причин.
+- Вывод временных меток следует интерпретировать с учётом UTC и локального часового пояса.
+- Программа предназначена для анализа временных аномалий, а не для восстановления содержимого удалённых файлов.
+
+## Благодарности и авторство
+
+Оригинальный проект: [santiagolin/TimeChangeDetect](https://github.com/santiagolin/TimeChangeDetect).
+
+Модифицированная версия: [mar41que/TimeChangeDetect](https://github.com/mar41que/TimeChangeDetect).
+
+Изменения данного форка направлены на повышение удобства криминалистического анализа NTFS-томов: реализован выбор диска через аргумент командной строки, использование доступа только на чтение и автоматическая сборка Windows x64.
+
+## Лицензия
+
+Условия использования и распространения определяются файлом [LICENSE](LICENSE) данного репозитория.
